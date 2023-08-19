@@ -1,0 +1,270 @@
+##Credit Card Fraud Detection
+
+
+
+import numpy as np #linear algebra
+
+import pandas as pd #data processing/uploading
+
+import matplotlib.pyplot as plt
+
+import seaborn as sns
+
+
+
+df= pd.read_csv("C:\\Users\\sazid\\Desktop\\documents\\job\\Project\\card_transdata.csv\\card_transdata.csv")
+
+df.head()
+
+df.info()
+
+##looking for missing values
+df.isna()
+
+df.isna().sum()
+
+df.duplicated().sum()
+
+##Features Distribution
+num_features= ['distance_from_home','distance_from_last_transaction','ratio_to_median_purchase_price']
+fig,axis= plt.subplots(1,3,figsize=(20,4))
+for i,col in enumerate (num_features):
+    sns.boxplot(data=df,x=col,ax=axis[i])
+    axis[i].set_title(f'{col} distribution')
+
+cat_features=['repeat_retailer','used_chip','used_pin_number','online_order']
+fig,axis=plt.subplots(1,4,figsize=(15,4))
+for i,col in enumerate(cat_features):
+    df[col].value_counts().plot(kind='pie',ax=axis[i],title=col)
+
+##Target Distribution
+sns.countplot(data=df,x='fraud')
+
+fig,axis=plt.subplots(1,3,figsize=(20,10))
+for i, col in enumerate (num_features):
+    sns.boxenplot(x=df['fraud'],y=df[col],ax=axis[i])
+    axis[i].set_title(f'col vs fraud')
+
+plt.figure(figsize=(15,10))
+sns.heatmap(df.corr(),cmap='Blues',annot=True);
+
+##Model Building
+def validate(model,x_train,y_train,score,n):
+    ''' this function is to validate the model across multiple stratified splits'''
+    splits=StratifiedKFold(n_splits=n)
+    validate=cross_val_score(model,x_train,y_train,cv=splits,scoring=score)
+    print('cross validation score:', validate)
+    print('scores mean:', validate.mean())
+    print('score stddev:', validate.std())
+    model.fit(x_train,y_train)
+    return model
+    
+
+def model_tunning(model,X_train,y_train,param_grid):
+    
+    '''This function recieves a model then tune it using GridSearch 
+    then print the best parameters and return the best estimator'''
+    
+    grid_search = GridSearchCV(estimator=model,param_grid=param_grid,cv=5,scoring='recall')
+    grid_search.fit(X_train,y_train)
+    best_params = grid_search.best_params_
+    best_estimator = grid_search.best_estimator_
+    best_score = grid_search.best_score_
+    cv_results = pd.DataFrame(grid_search.cv_results_)
+    print("Best parameters are: ",best_params)
+    print('Mean cross-validated recall of the best_estimator is: ',best_score)
+    #print(cv_results)
+    return best_estimator
+
+def roc_auc(model,X_test,y_test):
+    
+    '''this function plots the roc-auc curve and calculate the model ROC-AUC score '''
+    
+    y_proba = model.predict_proba(X_test)
+    fpr ,tpr ,threshold = roc_curve(y_test,y_proba[:,1])
+    fp_tp = pd.DataFrame({'Threshold':threshold,'FPR':fpr,'TPR':tpr})
+    fig = px.line(
+        fp_tp,
+        x='FPR',
+        y='TPR',
+        title='ROC Curve',
+        width=700,height=500,
+        hover_data=['Threshold']
+    )
+    fig.show()
+    print('Testing ROC-AUC Score: ',roc_auc_score(y_test,y_proba[:,1]))
+
+def model_evaluation(model,X_test,y_test,color='Blues',threshold=0.5):
+    
+    '''this function is to evaluate the model based on a given threshold
+    1--> print the classification report     2--> display the confusion matrix'''
+    
+    #classification report
+    y_proba_test = model.predict_proba(X_test)
+    y_pred_test  = (y_proba_test[:,1]>=threshold)
+    print(classification_report(y_test,y_pred_test,zero_division=0))
+    #confusion matrix
+    plt.figure(figsize=(5,4))
+    sns.heatmap(confusion_matrix(y_test,y_pred_test),cmap=color,annot=True)
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.title('Confusion Matrix')
+
+from sklearn.model_selection import train_test_split , GridSearchCV ,StratifiedKFold , cross_val_score
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import confusion_matrix , precision_recall_curve , roc_auc_score , roc_curve , classification_report
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier ,plot_tree
+from sklearn.ensemble import VotingClassifier ,RandomForestClassifier ,AdaBoostClassifier ,GradientBoostingClassifier
+from xgboost import XGBClassifier
+
+import sys
+!{sys.executable} -m pip install xgboost
+
+##Data Splitting and Preprocessing
+features = df.columns.drop(['fraud'])
+target = 'fraud'
+
+X = df[features]
+y = df[target]
+
+X_train , X_test ,y_train , y_test = train_test_split(X,y,test_size = 0.2 ,random_state = 42 ,stratify=y)
+
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+##logistic regression
+log_reg = validate(LogisticRegression(random_state=42),X_train,y_train,'recall',5)
+
+param_grid = {
+    'penalty':['l1','l2'],
+    'C':[0.01, 0.1, 1, 10, 100, 1000]
+}
+log_reg = model_tunning(LogisticRegression(random_state=42,solver='liblinear'),X_train,y_train,param_grid)
+
+y_prob_test = log_reg.predict_proba(X_test)[:,1]
+precision, recall, thresholds = precision_recall_curve(y_test, y_prob_test)
+plt.fill_between(recall, precision)
+plt.ylabel("Precision")
+plt.xlabel("Recall")
+plt.title("Train Precision-Recall curve");
+
+model_evaluation(log_reg,X_train,y_train,'Reds')
+
+model_evaluation(log_reg,X_test,y_test,'Reds')
+
+from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_auc_score
+y_pred_prob = log_reg.predict_proba(X_test)[:,1]
+fpr, tpr, thresholds = roc_curve(y_test, y_pred_prob)
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr, tpr, label='Logistic Regression')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Logistic Regression ROC Curve')
+plt.show()
+roc_auc_score(y_test, y_pred_prob)
+
+##Decision Tree
+dec_tree = validate(DecisionTreeClassifier(random_state=42),X_train,y_train,'recall',5)
+
+y_prob_test = dec_tree.predict_proba(X_test)[:,1]
+precision, recall, thresholds = precision_recall_curve(y_test, y_prob_test)
+plt.fill_between(recall, precision)
+plt.ylabel("Precision")
+plt.xlabel("Recall")
+plt.title("Train Precision-Recall curve");
+
+model_evaluation(dec_tree,X_train,y_train,'Blues')
+
+model_evaluation(dec_tree,X_test,y_test,'Blues')
+
+from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_auc_score
+y_pred_prob = dec_tree.predict_proba(X_test)[:,1]
+fpr, tpr, thresholds = roc_curve(y_test, y_pred_prob)
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr, tpr, label='Decision Tree')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Decision Tree ROC Curve')
+plt.show()
+roc_auc_score(y_test, y_pred_prob)
+
+plt.figure(figsize=(80,20))
+plot_tree(
+          dec_tree,
+          feature_names=X.columns,
+          class_names=['No Fraud', "Fraud"],
+          filled=True,
+          rounded=True,
+          fontsize=15
+);
+
+feat_imp_dt = pd.Series(dec_tree.feature_importances_,index=X.columns).sort_values(ascending=False)
+sns.barplot(x=feat_imp_dt,y=feat_imp_dt.index)
+plt.title('Feature Importances');
+
+##XGBoost Classifier
+xgb = validate(XGBClassifier(n_estimators=500 ,random_state=42 ,n_jobs=-1),X_train,y_train,'recall',5)
+
+y_prob_test = xgb.predict_proba(X_test)[:,1]
+precision, recall, thresholds = precision_recall_curve(y_test, y_prob_test)
+plt.fill_between(recall, precision)
+plt.ylabel("Precision")
+plt.xlabel("Recall")
+plt.title("Train Precision-Recall curve");
+
+model_evaluation(xgb,X_train,y_train,'Greens',threshold=0.001976)
+
+model_evaluation(xgb,X_test,y_test,'Greens',threshold=0.001976)
+
+from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_auc_score
+y_pred_prob = xgb.predict_proba(X_test)[:,1]
+fpr, tpr, thresholds = roc_curve(y_test, y_pred_prob)
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr, tpr, label='SGB')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('XGB ROC Curve')
+plt.show()
+roc_auc_score(y_test, y_pred_prob)
+
+##Random forest
+rfc = validate(RandomForestClassifier(n_estimators=500 ,n_jobs=-1 ,random_state=42),X_train,y_train,'recall',5)
+
+## Precision-Recall-Tradeoff
+y_prob_test = rfc.predict_proba(X_test)[:,1]
+precision, recall, thresholds = precision_recall_curve(y_test, y_prob_test)
+plt.fill_between(recall, precision)
+plt.ylabel("Precision")
+plt.xlabel("Recall")
+plt.title("Train Precision-Recall curve");
+
+model_evaluation(rfc,X_train,y_train,'Blues')
+
+model_evaluation(rfc,X_test,y_test,'Blues')
+
+from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_auc_score
+y_pred_prob = rfc.predict_proba(X_test)[:,1]
+fpr, tpr, thresholds = roc_curve(y_test, y_pred_prob)
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr, tpr, label='SGB')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('RF ROC Curve')
+plt.show()
+roc_auc_score(y_test, y_pred_prob)
+
+feat_imp_rf = pd.Series(rfc.feature_importances_,index=X.columns).sort_values(ascending=False)
+sns.barplot(x=feat_imp_rf,y=feat_imp_rf.index)
+plt.title('Feature Importances');
+
+##Conclusion: dropping outliers will lead to losing important information, Decision Tree ,XGBoost and Random Forest achieved great results on both training and test sets (nearly 100% F1 score,100% Recall, 100% ROC-AUC score).
